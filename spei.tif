@@ -1,0 +1,40 @@
+# Load required packages
+if (!require(SPEI)) install.packages("SPEI", dependencies = TRUE)
+if (!require(raster)) install.packages("raster", dependencies = TRUE)
+library(SPEI)
+library(raster)
+
+# Set paths for PET and precipitation files
+pet_path <- "G:/FINAL USES DATA/Reprojected_All data/Reprojected_PET_500m/"             # Replace with the path to your PET files
+precip_path <- "G:/FINAL USES DATA/Reprojected_All data/Reprojected_Precipititaion_500m/" # Replace with the path to your precipitation files
+
+# Load the PET and precipitation files as raster stacks
+pet_stack <- stack(list.files(pet_path, pattern = ".*.tif$", full.names = TRUE))
+precip_stack <- stack(list.files(precip_path, pattern = ".*.tif$", full.names = TRUE))
+
+# Ensure both stacks have the same CRS, resolution, and extent
+precip_stack <- resample(precip_stack, pet_stack)
+
+# Calculate monthly water balance (Precipitation - PET)
+water_balance_stack <- precip_stack - pet_stack
+
+# Convert water balance raster stack to a time series for SPEI calculation
+water_balance_ts <- as.data.frame(rasterToPoints(water_balance_stack))
+water_balance_ts <- ts(water_balance_ts[, -c(1, 2)], start = c(2001, 1), frequency = 12)
+
+# Calculate the SPEI-3 for each pixel
+spei_3 <- apply(water_balance_ts, 2, function(x) spei(x, scale = 3)$fitted)
+
+# Convert SPEI-3 values back to a raster stack for each month
+spei_rasters <- stack()
+for (i in 1:ncol(spei_3)) {
+  month_spei <- matrix(spei_3[, i], ncol = ncol(water_balance_stack), nrow = nrow(water_balance_stack))
+  month_raster <- setValues(water_balance_stack[[1]], as.vector(month_spei))
+  spei_rasters <- addLayer(spei_rasters, month_raster)
+}
+
+# Set layer names to correspond to year and month for easier identification
+names(spei_rasters) <- paste0("SPEI3_", 2001 + (1:nlayers(spei_rasters) - 1) %/% 12, "_", (1:nlayers(spei_rasters) - 1) %% 12 + 1)
+
+# Save the SPEI-3 raster stack as GeoTIFF files
+writeRaster(spei_rasters, filename = "SPEI3_2001_2020.tif", format = "GTiff", bylayer = TRUE, suffix = 'numbers', overwrite = TRUE)
